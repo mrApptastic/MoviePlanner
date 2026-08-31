@@ -1,0 +1,194 @@
+@page "/friends"
+@inject IGoogleSheetsService SheetsService
+
+<PageTitle>Friends & Groups</PageTitle>
+
+<h2>👥 Friends & Groups</h2>
+
+<div class="row">
+    <div class="col-md-6">
+        <h4>Friends</h4>
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="mb-2">
+                    <input type="text" class="form-control mb-2" placeholder="Name" @bind="newFriendName" />
+                    <input type="email" class="form-control mb-2" placeholder="Email" @bind="newFriendEmail" />
+                    <button class="btn btn-primary btn-sm" @onclick="AddFriendAsync">
+                        @(editingFriendId == null ? "Add Friend" : "Update Friend")
+                    </button>
+                    @if (editingFriendId != null)
+                    {
+                        <button class="btn btn-secondary btn-sm ms-1" @onclick="CancelEditFriend">Cancel</button>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @if (friends.Count == 0)
+        {
+            <p class="text-muted">No friends added yet.</p>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var friend in friends)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>@friend.Name</strong><br />
+                            <small class="text-muted">@friend.Email</small>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => EditFriend(friend)">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteFriendAsync(friend.Id)">Delete</button>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="col-md-6">
+        <h4>Groups</h4>
+        <div class="card mb-3">
+            <div class="card-body">
+                <input type="text" class="form-control mb-2" placeholder="Group Name" @bind="newGroupName" />
+                <div class="mb-2">
+                    <label class="form-label">Select Friends:</label>
+                    @foreach (var friend in friends)
+                    {
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" checked="@selectedFriendIds.Contains(friend.Id)"
+                                   @onchange="(e) => ToggleFriendInGroup(friend.Id, (bool)(e.Value ?? false))" />
+                            <label class="form-check-label">@friend.Name</label>
+                        </div>
+                    }
+                </div>
+                <button class="btn btn-primary btn-sm" @onclick="SaveGroupAsync">
+                    @(editingGroupId == null ? "Create Group" : "Update Group")
+                </button>
+                @if (editingGroupId != null)
+                {
+                    <button class="btn btn-secondary btn-sm ms-1" @onclick="CancelEditGroup">Cancel</button>
+                }
+            </div>
+        </div>
+
+        @if (groups.Count == 0)
+        {
+            <p class="text-muted">No groups created yet.</p>
+        }
+        else
+        {
+            @foreach (var group in groups)
+            {
+                <div class="card mb-2">
+                    <div class="card-body">
+                        <h6>@group.Name</h6>
+                        <p class="small text-muted mb-1">
+                            @string.Join(", ", group.FriendIds.Select(id => friends.FirstOrDefault(f => f.Id == id)?.Name ?? "Unknown"))
+                        </p>
+                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => EditGroup(group)">Edit</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteGroupAsync(group.Id)">Delete</button>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private List<Friend> friends = new();
+    private List<Group> groups = new();
+    private string newFriendName = "";
+    private string newFriendEmail = "";
+    private string? editingFriendId;
+    private string newGroupName = "";
+    private HashSet<string> selectedFriendIds = new();
+    private string? editingGroupId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        friends = await SheetsService.GetFriendsAsync();
+        groups = await SheetsService.GetGroupsAsync();
+    }
+
+    private async Task AddFriendAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newFriendName) || string.IsNullOrWhiteSpace(newFriendEmail)) return;
+        var friend = new Friend
+        {
+            Id = editingFriendId ?? Guid.NewGuid().ToString(),
+            Name = newFriendName,
+            Email = newFriendEmail
+        };
+        await SheetsService.SaveFriendAsync(friend);
+        CancelEditFriend();
+        await LoadDataAsync();
+    }
+
+    private void EditFriend(Friend friend)
+    {
+        editingFriendId = friend.Id;
+        newFriendName = friend.Name;
+        newFriendEmail = friend.Email;
+    }
+
+    private void CancelEditFriend()
+    {
+        editingFriendId = null;
+        newFriendName = "";
+        newFriendEmail = "";
+    }
+
+    private async Task DeleteFriendAsync(string id)
+    {
+        await SheetsService.DeleteFriendAsync(id);
+        await LoadDataAsync();
+    }
+
+    private async Task SaveGroupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newGroupName)) return;
+        var group = new Group
+        {
+            Id = editingGroupId ?? Guid.NewGuid().ToString(),
+            Name = newGroupName,
+            FriendIds = selectedFriendIds.ToList()
+        };
+        await SheetsService.SaveGroupAsync(group);
+        CancelEditGroup();
+        await LoadDataAsync();
+    }
+
+    private void EditGroup(Group group)
+    {
+        editingGroupId = group.Id;
+        newGroupName = group.Name;
+        selectedFriendIds = group.FriendIds.ToHashSet();
+    }
+
+    private void CancelEditGroup()
+    {
+        editingGroupId = null;
+        newGroupName = "";
+        selectedFriendIds.Clear();
+    }
+
+    private void ToggleFriendInGroup(string friendId, bool isChecked)
+    {
+        if (isChecked) selectedFriendIds.Add(friendId);
+        else selectedFriendIds.Remove(friendId);
+    }
+
+    private async Task DeleteGroupAsync(string id)
+    {
+        await SheetsService.DeleteGroupAsync(id);
+        await LoadDataAsync();
+    }
+}
