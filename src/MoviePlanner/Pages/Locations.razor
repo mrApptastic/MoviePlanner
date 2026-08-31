@@ -1,0 +1,92 @@
+@page "/locations"
+@inject IGoogleSheetsService SheetsService
+
+<PageTitle>Locations</PageTitle>
+
+<h2>📍 Locations</h2>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5>@(editingLocationId == null ? "Add Location" : "Edit Location")</h5>
+        <div class="mb-2">
+            <input type="text" class="form-control mb-2" placeholder="Location Name (e.g., Home Theater)" @bind="newLocationName" />
+            <input type="text" class="form-control mb-2" placeholder="Address" @bind="newLocationAddress" />
+        </div>
+        <button class="btn btn-primary" @onclick="SaveLocationAsync">
+            @(editingLocationId == null ? "Add Location" : "Update Location")
+        </button>
+        @if (editingLocationId != null)
+        {
+            <button class="btn btn-secondary ms-2" @onclick="CancelEdit">Cancel</button>
+        }
+    </div>
+</div>
+
+@if (locations.Count == 0)
+{
+    <p class="text-muted">No locations added yet.</p>
+}
+else
+{
+    <div class="row">
+        @foreach (var location in locations)
+        {
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">@location.Name</h5>
+                        <p class="card-text">📍 @location.Address</p>
+                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => EditLocation(location)">Edit</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteLocationAsync(location.Id)">Delete</button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<Location> locations = new();
+    private string newLocationName = "";
+    private string newLocationAddress = "";
+    private string? editingLocationId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        locations = await SheetsService.GetLocationsAsync();
+    }
+
+    private async Task SaveLocationAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newLocationName) || string.IsNullOrWhiteSpace(newLocationAddress)) return;
+        var location = new Location
+        {
+            Id = editingLocationId ?? Guid.NewGuid().ToString(),
+            Name = newLocationName,
+            Address = newLocationAddress
+        };
+        await SheetsService.SaveLocationAsync(location);
+        CancelEdit();
+        locations = await SheetsService.GetLocationsAsync();
+    }
+
+    private void EditLocation(Location location)
+    {
+        editingLocationId = location.Id;
+        newLocationName = location.Name;
+        newLocationAddress = location.Address;
+    }
+
+    private void CancelEdit()
+    {
+        editingLocationId = null;
+        newLocationName = "";
+        newLocationAddress = "";
+    }
+
+    private async Task DeleteLocationAsync(string id)
+    {
+        await SheetsService.DeleteLocationAsync(id);
+        locations = await SheetsService.GetLocationsAsync();
+    }
+}

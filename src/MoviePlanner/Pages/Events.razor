@@ -1,0 +1,304 @@
+@page "/events"
+@inject IGoogleSheetsService SheetsService
+@inject ICalendarService CalendarService
+@inject IEmailService EmailService
+@inject IGoogleAuthService AuthService
+
+<PageTitle>Events</PageTitle>
+
+<h2>📅 Movie Events</h2>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5>@(editingEventId == null ? "Schedule New Event" : "Edit Event")</h5>
+        <div class="row">
+            <div class="col-md-6 mb-2">
+                <label class="form-label">Event Title</label>
+                <input type="text" class="form-control" placeholder="Movie Night!" @bind="eventTitle" />
+            </div>
+            <div class="col-md-6 mb-2">
+                <label class="form-label">Date & Time</label>
+                <input type="datetime-local" class="form-control" @bind="eventDateTime" />
+            </div>
+            <div class="col-md-6 mb-2">
+                <label class="form-label">Location</label>
+                <select class="form-select" @bind="eventLocationId">
+                    <option value="">Select a location...</option>
+                    @foreach (var loc in locations)
+                    {
+                        <option value="@loc.Id">@loc.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6 mb-2">
+                <label class="form-label">Movie</label>
+                <select class="form-select" @bind="eventMovieId">
+                    <option value="">Select a movie...</option>
+                    @foreach (var movie in favoriteMovies)
+                    {
+                        <option value="@movie.ImdbId">@movie.Title (@movie.Year)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 mb-2">
+                <label class="form-label">Invite Friends</label>
+                <div class="mb-2">
+                    <label class="form-label small text-muted">Quick add from group:</label>
+                    <select class="form-select form-select-sm mb-2" @onchange="AddGroupFriends">
+                        <option value="">Select a group...</option>
+                        @foreach (var group in groups)
+                        {
+                            <option value="@group.Id">@group.Name</option>
+                        }
+                    </select>
+                </div>
+                @foreach (var friend in friends)
+                {
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" checked="@invitedFriendIds.Contains(friend.Id)"
+                               @onchange="(e) => ToggleFriend(friend.Id, (bool)(e.Value ?? false))" />
+                        <label class="form-check-label">@friend.Name</label>
+                    </div>
+                }
+            </div>
+        </div>
+        <button class="btn btn-primary" @onclick="ScheduleEventAsync" disabled="@isSaving">
+            @(isSaving ? "Saving..." : editingEventId == null ? "Schedule Event" : "Update Event")
+        </button>
+        @if (editingEventId != null)
+        {
+            <button class="btn btn-secondary ms-2" @onclick="CancelEdit">Cancel</button>
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success") alert-dismissible">
+        @statusMessage
+        <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+    </div>
+}
+
+<h4>Upcoming Events</h4>
+@if (events.Where(e => !e.IsCancelled).Count() == 0)
+{
+    <p class="text-muted">No events scheduled.</p>
+}
+else
+{
+    @foreach (var evt in events.Where(e => !e.IsCancelled).OrderBy(e => e.DateTime))
+    {
+        var location = locations.FirstOrDefault(l => l.Id == evt.LocationId);
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-2">
+                        @if (!string.IsNullOrEmpty(evt.MoviePoster) && evt.MoviePoster != "N/A")
+                        {
+                            <img src="@evt.MoviePoster" alt="@evt.MovieTitle" class="img-fluid rounded" />
+                        }
+                    </div>
+                    <div class="col-md-10">
+                        <h5>@evt.Title</h5>
+                        <p>
+                            <strong>🎥 Movie:</strong> @evt.MovieTitle<br />
+                            <strong>📅 Date:</strong> @evt.DateTime.ToString("dddd, MMMM d, yyyy 'at' h:mm tt")<br />
+                            <strong>📍 Location:</strong> @(location?.Name ?? "Unknown") - @(location?.Address ?? "")<br />
+                            <strong>👥 Invited:</strong> @string.Join(", ", evt.InvitedFriendIds.Select(id => friends.FirstOrDefault(f => f.Id == id)?.Name ?? "Unknown"))
+                        </p>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => CancelEventAsync(evt)" disabled="@isSaving">
+                            Cancel Event
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@if (events.Any(e => e.IsCancelled))
+{
+    <h4 class="mt-4 text-muted">Cancelled Events</h4>
+    @foreach (var evt in events.Where(e => e.IsCancelled).OrderByDescending(e => e.DateTime))
+    {
+        <div class="card mb-2 border-secondary">
+            <div class="card-body text-muted">
+                <h6><s>@evt.Title</s> <span class="badge bg-secondary">Cancelled</span></h6>
+                <p class="small mb-0">@evt.MovieTitle - @evt.DateTime.ToString("MMMM d, yyyy")</p>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<MovieEvent> events = new();
+    private List<Movie> favoriteMovies = new();
+    private List<Friend> friends = new();
+    private List<Group> groups = new();
+    private List<Location> locations = new();
+
+    private string eventTitle = "";
+    private DateTime eventDateTime = DateTime.Now.AddDays(7);
+    private string eventLocationId = "";
+    private string eventMovieId = "";
+    private HashSet<string> invitedFriendIds = new();
+    private string? editingEventId;
+    private bool isSaving;
+    private string? statusMessage;
+    private bool isError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        events = await SheetsService.GetEventsAsync();
+        favoriteMovies = await SheetsService.GetFavoriteMoviesAsync();
+        friends = await SheetsService.GetFriendsAsync();
+        groups = await SheetsService.GetGroupsAsync();
+        locations = await SheetsService.GetLocationsAsync();
+    }
+
+    private void ToggleFriend(string friendId, bool isChecked)
+    {
+        if (isChecked) invitedFriendIds.Add(friendId);
+        else invitedFriendIds.Remove(friendId);
+    }
+
+    private void AddGroupFriends(ChangeEventArgs e)
+    {
+        var groupId = e.Value?.ToString();
+        if (string.IsNullOrEmpty(groupId)) return;
+        var group = groups.FirstOrDefault(g => g.Id == groupId);
+        if (group != null)
+        {
+            foreach (var friendId in group.FriendIds)
+                invitedFriendIds.Add(friendId);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ScheduleEventAsync()
+    {
+        if (string.IsNullOrWhiteSpace(eventTitle) || string.IsNullOrEmpty(eventLocationId) ||
+            string.IsNullOrEmpty(eventMovieId) || invitedFriendIds.Count == 0)
+        {
+            statusMessage = "Please fill in all fields and select at least one friend.";
+            isError = true;
+            return;
+        }
+
+        isSaving = true;
+        statusMessage = null;
+        try
+        {
+            var selectedMovie = favoriteMovies.FirstOrDefault(m => m.ImdbId == eventMovieId);
+            var selectedLocation = locations.FirstOrDefault(l => l.Id == eventLocationId);
+            var selectedFriends = friends.Where(f => invitedFriendIds.Contains(f.Id)).ToList();
+
+            var movieEvent = new MovieEvent
+            {
+                Id = editingEventId ?? Guid.NewGuid().ToString(),
+                Title = eventTitle,
+                DateTime = eventDateTime,
+                LocationId = eventLocationId,
+                MovieImdbId = eventMovieId,
+                MovieTitle = selectedMovie?.Title ?? "",
+                MoviePoster = selectedMovie?.Poster ?? "",
+                InvitedFriendIds = invitedFriendIds.ToList()
+            };
+
+            // Create Google Calendar event
+            if (selectedLocation != null)
+            {
+                var calendarEventId = await CalendarService.CreateCalendarEventAsync(movieEvent, selectedLocation, selectedFriends);
+                movieEvent.GoogleCalendarEventId = calendarEventId;
+            }
+
+            // Save to sheets
+            await SheetsService.SaveEventAsync(movieEvent);
+
+            // Send email invitations to non-Gmail friends
+            var tokenInfo = await AuthService.GetTokenInfoAsync();
+            if (tokenInfo != null && selectedMovie != null && selectedLocation != null)
+            {
+                foreach (var friend in selectedFriends)
+                {
+                    if (!friend.Email.EndsWith("@gmail.com", StringComparison.OrdinalIgnoreCase) &&
+                        !friend.Email.EndsWith("@googlemail.com", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await EmailService.SendEventInvitationAsync(movieEvent, selectedLocation, selectedMovie, friend, tokenInfo.Email);
+                    }
+                }
+            }
+
+            statusMessage = "Event scheduled successfully! Calendar invites have been sent.";
+            isError = false;
+            CancelEdit();
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error scheduling event: {ex.Message}";
+            isError = true;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task CancelEventAsync(MovieEvent evt)
+    {
+        isSaving = true;
+        try
+        {
+            // Cancel Google Calendar event
+            if (!string.IsNullOrEmpty(evt.GoogleCalendarEventId))
+            {
+                await CalendarService.CancelCalendarEventAsync(evt.GoogleCalendarEventId);
+            }
+
+            // Send cancellation emails
+            var tokenInfo = await AuthService.GetTokenInfoAsync();
+            var selectedFriends = friends.Where(f => evt.InvitedFriendIds.Contains(f.Id)).ToList();
+            if (tokenInfo != null)
+            {
+                foreach (var friend in selectedFriends)
+                {
+                    await EmailService.SendCancellationAsync(evt, friend, tokenInfo.Email);
+                }
+            }
+
+            // Mark as cancelled
+            evt.IsCancelled = true;
+            await SheetsService.SaveEventAsync(evt);
+
+            statusMessage = "Event cancelled. Notifications have been sent to all invited friends.";
+            isError = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error cancelling event: {ex.Message}";
+            isError = true;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void CancelEdit()
+    {
+        editingEventId = null;
+        eventTitle = "";
+        eventDateTime = DateTime.Now.AddDays(7);
+        eventLocationId = "";
+        eventMovieId = "";
+        invitedFriendIds.Clear();
+    }
+}

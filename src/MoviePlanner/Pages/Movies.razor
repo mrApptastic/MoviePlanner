@@ -1,0 +1,151 @@
+@page "/movies"
+@inject IOmdbService OmdbService
+@inject IGoogleSheetsService SheetsService
+
+<PageTitle>Movies</PageTitle>
+
+<h2>🎥 Movies</h2>
+
+<div class="mb-4">
+    <h4>Search Movies</h4>
+    <div class="input-group">
+        <input type="text" class="form-control" placeholder="Search for a movie..." @bind="searchQuery"
+               @onkeypress="HandleKeyPress" />
+        <button class="btn btn-primary" @onclick="SearchAsync" disabled="@isSearching">
+            @(isSearching ? "Searching..." : "Search")
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-warning">@errorMessage</div>
+}
+
+@if (searchResults.Count > 0)
+{
+    <div class="row">
+        @foreach (var movie in searchResults)
+        {
+            <div class="col-md-3 mb-3">
+                <div class="card h-100">
+                    @if (!string.IsNullOrEmpty(movie.Poster) && movie.Poster != "N/A")
+                    {
+                        <img src="@movie.Poster" class="card-img-top" alt="@movie.Title" style="max-height: 300px; object-fit: cover;" />
+                    }
+                    <div class="card-body">
+                        <h6 class="card-title">@movie.Title</h6>
+                        <p class="card-text text-muted">@movie.Year</p>
+                        <button class="btn btn-sm btn-success" @onclick="() => AddToFavoritesAsync(movie.imdbID)"
+                                disabled="@favoriteIds.Contains(movie.imdbID)">
+                            @(favoriteIds.Contains(movie.imdbID) ? "★ Favorited" : "☆ Add to Favorites")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<hr class="my-4" />
+
+<h4>⭐ Your Favorite Movies</h4>
+@if (favorites.Count == 0)
+{
+    <p class="text-muted">No favorite movies yet. Search and add some!</p>
+}
+else
+{
+    <div class="row">
+        @foreach (var movie in favorites)
+        {
+            <div class="col-md-3 mb-3">
+                <div class="card h-100">
+                    @if (!string.IsNullOrEmpty(movie.Poster) && movie.Poster != "N/A")
+                    {
+                        <img src="@movie.Poster" class="card-img-top" alt="@movie.Title" style="max-height: 300px; object-fit: cover;" />
+                    }
+                    <div class="card-body">
+                        <h6 class="card-title">@movie.Title (@movie.Year)</h6>
+                        <p class="card-text small">⭐ @movie.ImdbRating | @movie.Genre</p>
+                        <p class="card-text small text-muted">@movie.Director</p>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveFromFavoritesAsync(movie.ImdbId)">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private string searchQuery = "";
+    private bool isSearching;
+    private string errorMessage = "";
+    private List<OmdbSearchItem> searchResults = new();
+    private List<Movie> favorites = new();
+    private HashSet<string> favoriteIds = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFavoritesAsync();
+    }
+
+    private async Task LoadFavoritesAsync()
+    {
+        try
+        {
+            favorites = await SheetsService.GetFavoriteMoviesAsync();
+            favoriteIds = favorites.Select(f => f.ImdbId).ToHashSet();
+        }
+        catch { }
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery)) return;
+        isSearching = true;
+        errorMessage = "";
+        try
+        {
+            var result = await OmdbService.SearchMoviesAsync(searchQuery);
+            if (result.Response == "True")
+                searchResults = result.Search;
+            else
+            {
+                searchResults.Clear();
+                errorMessage = "No movies found. Try a different search term.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Search failed: {ex.Message}";
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    private async Task AddToFavoritesAsync(string imdbId)
+    {
+        var movie = await OmdbService.GetMovieByIdAsync(imdbId);
+        if (movie != null)
+        {
+            await SheetsService.AddFavoriteMovieAsync(movie);
+            await LoadFavoritesAsync();
+        }
+    }
+
+    private async Task RemoveFromFavoritesAsync(string imdbId)
+    {
+        await SheetsService.RemoveFavoriteMovieAsync(imdbId);
+        await LoadFavoritesAsync();
+    }
+}

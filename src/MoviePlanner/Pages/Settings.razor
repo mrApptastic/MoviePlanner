@@ -1,0 +1,138 @@
+@page "/settings"
+@inject IGoogleSheetsService SheetsService
+@inject IGoogleAuthService AuthService
+
+<PageTitle>Settings</PageTitle>
+
+<h2>⚙️ Settings</h2>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5>Google Sheets Database</h5>
+        <p class="text-muted">Your movie club data is stored in a Google Sheets spreadsheet.</p>
+
+        @if (string.IsNullOrEmpty(spreadsheetId))
+        {
+            <button class="btn btn-primary" @onclick="InitializeSpreadsheetAsync" disabled="@isInitializing">
+                @(isInitializing ? "Creating..." : "Create Movie Club Spreadsheet")
+            </button>
+        }
+        else
+        {
+            <div class="mb-3">
+                <label class="form-label">Spreadsheet ID</label>
+                <div class="input-group">
+                    <input type="text" class="form-control" value="@spreadsheetId" readonly />
+                    <a href="https://docs.google.com/spreadsheets/d/@spreadsheetId" target="_blank" class="btn btn-outline-primary">
+                        Open in Google Sheets
+                    </a>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5>OMDb API Key</h5>
+        <p class="text-muted">Get a free API key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank">omdbapi.com</a></p>
+        <div class="input-group mb-3">
+            <input type="text" class="form-control" placeholder="Enter your OMDb API key" @bind="omdbApiKey" />
+            <button class="btn btn-primary" @onclick="SaveSettingsAsync" disabled="@isSaving">
+                @(isSaving ? "Saving..." : "Save")
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <h5>Account</h5>
+        @if (tokenInfo != null)
+        {
+            <div class="d-flex align-items-center">
+                @if (!string.IsNullOrEmpty(tokenInfo.Picture))
+                {
+                    <img src="@tokenInfo.Picture" alt="Profile" class="rounded-circle me-3" width="48" height="48" />
+                }
+                <div>
+                    <strong>@tokenInfo.Name</strong><br />
+                    <small class="text-muted">@tokenInfo.Email</small>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <div class="alert alert-info mt-3">@statusMessage</div>
+}
+
+@code {
+    private string spreadsheetId = "";
+    private string omdbApiKey = "";
+    private bool isInitializing;
+    private bool isSaving;
+    private string? statusMessage;
+    private GoogleTokenInfo? tokenInfo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        tokenInfo = await AuthService.GetTokenInfoAsync();
+        try
+        {
+            var settings = await SheetsService.GetSettingsAsync();
+            omdbApiKey = settings.OmdbApiKey;
+            spreadsheetId = settings.SpreadsheetId;
+        }
+        catch { }
+    }
+
+    private async Task InitializeSpreadsheetAsync()
+    {
+        isInitializing = true;
+        try
+        {
+            spreadsheetId = await SheetsService.InitializeSpreadsheetAsync();
+            var settings = new AppSettings
+            {
+                SpreadsheetId = spreadsheetId,
+                OmdbApiKey = omdbApiKey
+            };
+            await SheetsService.SaveSettingsAsync(settings);
+            statusMessage = "Spreadsheet created successfully!";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isInitializing = false;
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        isSaving = true;
+        try
+        {
+            var settings = new AppSettings
+            {
+                SpreadsheetId = spreadsheetId,
+                OmdbApiKey = omdbApiKey
+            };
+            await SheetsService.SaveSettingsAsync(settings);
+            statusMessage = "Settings saved!";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}
